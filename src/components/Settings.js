@@ -10,15 +10,30 @@ const { Option } = Select;
 const Settings = ({ visible, onClose }) => {
   const { user, getCurrentUser, logout } = useAuth();
   const [form] = Form.useForm();
+  const [syncForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('profile');
+  const [syncPathValue, setSyncPathValue] = useState('');
 
   // 处理表单提交
   const handleSubmit = async (values) => {
     setLoading(true);
     try {
-      // TODO: 实现设置保存
-      await new Promise(resolve => setTimeout(resolve, 1000)); // 模拟API调用
+      if (window.electronAPI && window.electronAPI.store) {
+        await window.electronAPI.store.set('sync.settings', {
+          auto: values?.autoSync ?? true,
+          interval: values?.syncInterval ?? '30'
+        });
+
+        // 根据自动同步开关启动/停止本地监控
+        if (window.electronAPI.sync) {
+          if (values?.autoSync ?? true) {
+            await window.electronAPI.sync.start();
+          } else {
+            await window.electronAPI.sync.stop();
+          }
+        }
+      }
       message.success('设置保存成功');
     } catch (error) {
       message.error('设置保存失败');
@@ -55,6 +70,37 @@ const Settings = ({ visible, onClose }) => {
       setLoading(false);
     }
   };
+
+  React.useEffect(() => {
+    (async () => {
+      // 初始化同步设置（自动同步、同步间隔）
+      try {
+        if (window.electronAPI && window.electronAPI.store) {
+          const settings = await window.electronAPI.store.get('sync.settings');
+          syncForm.setFieldsValue({
+            autoSync: settings?.auto ?? true,
+            syncInterval: settings?.interval ?? '30',
+          });
+        } else {
+          syncForm.setFieldsValue({
+            autoSync: true,
+            syncInterval: '30',
+          });
+        }
+      } catch {
+        // ignore
+      }
+
+      // 初始化同步路径
+      if (window.electronAPI && window.electronAPI.fs) {
+        const p = await window.electronAPI.fs.getSyncPath();
+        if (p) {
+          setSyncPathValue(p);
+          syncForm.setFieldsValue({ syncPath: p });
+        }
+      }
+    })();
+  }, [syncForm]);
 
   // 个人资料设置
   const profileSettings = (
@@ -166,9 +212,17 @@ const Settings = ({ visible, onClose }) => {
 
   // 同步设置
   const syncSettings = (
-    <Form layout="vertical" onFinish={handleSubmit}>
+    <Form
+      form={syncForm}
+      layout="vertical"
+      onFinish={handleSubmit}
+      initialValues={{
+        autoSync: true,
+        syncInterval: '30',
+      }}
+    >
       <Form.Item label="自动同步" name="autoSync">
-        <Switch defaultChecked />
+        <Switch />
       </Form.Item>
 
       <Form.Item label="同步间隔" name="syncInterval">
@@ -180,26 +234,9 @@ const Settings = ({ visible, onClose }) => {
         </Select>
       </Form.Item>
 
-      <Form.Item label="同步方向" name="syncDirection">
-        <Select defaultValue="both">
-          <Option value="upload">仅上传</Option>
-          <Option value="download">仅下载</Option>
-          <Option value="both">双向同步</Option>
-        </Select>
-      </Form.Item>
-
-      <Form.Item label="最大同步文件大小" name="maxFileSize">
-        <Select defaultValue="100MB">
-          <Option value="10MB">10MB</Option>
-          <Option value="50MB">50MB</Option>
-          <Option value="100MB">100MB</Option>
-          <Option value="500MB">500MB</Option>
-          <Option value="1GB">1GB</Option>
-        </Select>
-      </Form.Item>
 
       <Form.Item label="同步文件夹路径" name="syncPath">
-        <Input placeholder="/home/user/CloudDisk" />
+        <Input placeholder="请选择本地同步路径" value={syncPathValue} readOnly />
       </Form.Item>
 
       <Form.Item>
@@ -207,7 +244,21 @@ const Settings = ({ visible, onClose }) => {
           <Button type="primary" htmlType="submit" loading={loading}>
             保存设置
           </Button>
-          <Button onClick={() => {}}>
+          <Button onClick={async () => {
+            if (!window.electronAPI) return;
+            const result = await window.electronAPI.showOpenDialog({ properties: ['openDirectory','createDirectory'] });
+            const p = result && result.filePaths && result.filePaths[0];
+            if (p) {
+              const setRes = await window.electronAPI.fs.setSyncPath(p);
+              if (setRes && setRes.success) {
+                setSyncPathValue(p);
+                syncForm.setFieldsValue({ syncPath: p });
+                message.success('同步路径已设置');
+              } else {
+                message.error(setRes?.error || '设置同步路径失败');
+              }
+            }
+          }}>
             浏览文件夹
           </Button>
         </Space>

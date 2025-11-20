@@ -15,8 +15,11 @@ import {
 } from '@ant-design/icons';
 import { useFile } from '../contexts/FileContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useSync } from '../contexts/SyncContext';
 import { formatFileSize, formatDate } from '../utils/fileUtils';
 import UploadManager from './UploadManager';
+import ShareModal from './ShareModal';
+import VersionHistory from './VersionHistory';
 import fileAPI from '../utils/fileAPI';
 import request from '../utils/request';
 
@@ -32,6 +35,7 @@ const FileManager = ({ view = 'all' }) => {
     selectedFiles,
     setSelectedFiles,
     fetchFiles,
+    fetchSharedFiles,
     fetchSyncFiles,
     navigateToFolder,
     navigateUp,
@@ -46,21 +50,17 @@ const FileManager = ({ view = 'all' }) => {
     currentSyncPath
   } = useFile();
   const { token } = useAuth();
+  const { triggerOnce } = useSync();
 
-  // 当view为sync时，设置为同步文件夹视图
   React.useEffect(() => {
-    if (view === 'sync') {
-      setIsSyncView(true);
-      // 初始化同步文件夹
-      if (syncPath && window.electronAPI && window.electronAPI.fs) {
-        fetchSyncFiles(syncPath);
-        // 设置面包屑
-        // 这个会在fetchSyncFiles中处理
-      }
-    } else {
-      setIsSyncView(false);
+    // 同步视图展示云端"同步文件"目录，由菜单点击触发 openNamedRootFolder
+    setIsSyncView(false);
+    
+    // 如果是共享文件视图，加载共享给我的文件
+    if (view === 'shared') {
+      fetchSharedFiles();
     }
-  }, [view, syncPath, setIsSyncView, fetchSyncFiles]);
+  }, [view, setIsSyncView, fetchSharedFiles]);
 
   const [searchText, setSearchText] = useState('');
   const [showNewFolderModal, setShowNewFolderModal] = useState(false);
@@ -78,7 +78,66 @@ const FileManager = ({ view = 'all' }) => {
   const [showMoveModal, setShowMoveModal] = useState(false); // 移动文件模态框
   const [moveTarget, setMoveTarget] = useState(null); // 要移动的文件/文件夹
   const [moveTargetParentId, setMoveTargetParentId] = useState(null); // 移动目标文件夹ID
+  const [shareTarget, setShareTarget] = useState(null); // 要分享的文件/文件夹
+  const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [versionFile, setVersionFile] = useState(null); // 查看版本的文件
+  const [versionDrawerVisible, setVersionDrawerVisible] = useState(false);
   const tableRef = useRef();
+  const inCloudSyncFolder = !isSyncView && Array.isArray(breadcrumbs) && breadcrumbs.length > 0 && breadcrumbs[0].name === '同步文件';
+  const needSyncPathGuard = () => inCloudSyncFolder && !syncPath;
+
+  const handleUploadToSync = async () => {
+    if (!syncPath) {
+      message.warning('请先在设置中选择同步路径');
+      return;
+    }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.onchange = async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      try {
+        const baseDir = currentSyncPath || syncPath;
+        const separator = baseDir.includes('\\') ? '\\' : '/';
+        const targetPath = `${baseDir}${baseDir.endsWith(separator) ? '' : separator}${file.name}`;
+        const arrayBuffer = await file.arrayBuffer();
+        const writeRes = await window.electronAPI.fs.writeFile(targetPath, new Uint8Array(arrayBuffer));
+        if (writeRes && writeRes.success) {
+          message.success('已写入本地同步文件夹');
+          fetchSyncFiles(baseDir);
+          // 云端镜像：上传到“同步文件”目录
+          try {
+            const rootRes = await request.get('/fs/list?parent_id=null');
+            if (rootRes.code === 0) {
+              const syncFolder = (rootRes.data.items || []).find(i => i.is_dir && i.name === '同步文件');
+              const parentId = syncFolder ? syncFolder.id : null;
+              if (parentId) {
+                const upRes = await fileAPI.uploadSimple(parentId, file);
+                if (upRes.success) {
+                  message.success('已同步到云端');
+                } else {
+                  message.warning('本地写入成功，云端上传失败');
+                }
+              }
+            }
+          } catch {}
+        } else {
+          message.error(writeRes?.error || '写入本地失败');
+        }
+      } catch (err) {
+        message.error('上传到本地失败');
+      }
+    };
+    input.click();
+  };
+
+  const guardOr = (fn) => {
+    if (needSyncPathGuard()) {
+      message.warning('请先在设置中选择本地同步路径');
+      return;
+    }
+    return fn();
+  };
 
   // 过滤和排序文件列表
   const filteredFiles = React.useMemo(() => {
@@ -173,6 +232,11 @@ const FileManager = ({ view = 'all' }) => {
           >
             {text}
           </Text>
+          {view === 'shared' && record.owner_username && (
+            <Text type="secondary" style={{ fontSize: '12px', marginLeft: '8px' }}>
+              （来自：{record.owner_username}）
+            </Text>
+          )}
         </Space>
       ),
     },
@@ -219,55 +283,83 @@ const FileManager = ({ view = 'all' }) => {
                 />
               </Tooltip>
             )}
-            {/* 分享按钮 */}
-            <Tooltip title="分享">
-              <Button
-                type="text"
-                size="small"
-                icon={<ShareAltOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  message.info('分享功能开发中...');
-                }}
-              />
-            </Tooltip>
-            {/* 移动按钮 */}
-            <Tooltip title="移动">
-              <Button
-                type="text"
-                size="small"
-                icon={<MoveOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleMove(record);
-                }}
-              />
-            </Tooltip>
-            {/* 重命名按钮 */}
-            <Tooltip title="重命名">
-              <Button
-                type="text"
-                size="small"
-                icon={<RenameOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleRename(record);
-                }}
-              />
-            </Tooltip>
-            {/* 删除按钮 */}
-            <Tooltip title="删除">
-              <Button
-                type="text"
-                size="small"
-                danger
-                icon={<DeleteOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDelete([record.id]);
-                }}
-              />
-            </Tooltip>
+            {/* 分享按钮（共享文件视图中不显示，因为不是自己的文件） */}
+            {view !== 'shared' && (
+              <Tooltip title="分享">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ShareAltOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (record.is_dir || !isSyncView) {
+                      setShareTarget(record);
+                      setShareModalVisible(true);
+                    } else {
+                      message.info('本地同步视图下暂不支持云端共享');
+                    }
+                  }}
+                />
+              </Tooltip>
+            )}
+            {/* 版本历史（仅文件） */}
+            {!record.is_dir && !isSyncView && (
+              <Tooltip title="版本历史">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<HistoryOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setVersionFile(record);
+                    setVersionDrawerVisible(true);
+                  }}
+                />
+              </Tooltip>
+            )}
+            {/* 移动按钮（共享文件视图中不显示，因为不是自己的文件） */}
+            {view !== 'shared' && (
+              <Tooltip title="移动">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<MoveOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMove(record);
+                  }}
+                />
+              </Tooltip>
+            )}
+            {/* 重命名按钮（共享文件视图中不显示，因为不是自己的文件） */}
+            {view !== 'shared' && (
+              <Tooltip title="重命名">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<RenameOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRename(record);
+                  }}
+                />
+              </Tooltip>
+            )}
+            {/* 删除按钮（共享文件视图中不显示，因为不是自己的文件） */}
+            {view !== 'shared' && (
+              <Tooltip title="删除">
+                <Button
+                  type="text"
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete([record.id]);
+                  }}
+                />
+              </Tooltip>
+            )}
           </Space>
         );
       },
@@ -301,6 +393,10 @@ const FileManager = ({ view = 'all' }) => {
   // 新建文件夹
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
+    if (needSyncPathGuard()) {
+      message.warning('请先设置本地同步路径');
+      return;
+    }
     
     // 如果在同步文件夹视图，使用本地文件系统
     if (isSyncView) {
@@ -337,6 +433,10 @@ const FileManager = ({ view = 'all' }) => {
 
   // 重命名
   const handleRename = async (record) => {
+    if (needSyncPathGuard()) {
+      message.warning('请先设置本地同步路径');
+      return;
+    }
     Modal.confirm({
       title: '重命名',
       content: (
@@ -456,6 +556,10 @@ const FileManager = ({ view = 'all' }) => {
 
   // 移动文件/文件夹
   const handleMove = (record) => {
+    if (needSyncPathGuard()) {
+      message.warning('请先设置本地同步路径');
+      return;
+    }
     setMoveTarget(record);
     setShowMoveModal(true);
   };
@@ -522,6 +626,10 @@ const FileManager = ({ view = 'all' }) => {
 
   // 删除
   const handleDelete = async (ids) => {
+    if (needSyncPathGuard()) {
+      message.warning('请先设置本地同步路径');
+      return;
+    }
     Modal.confirm({
       title: '确认删除',
       content: `确定要删除选中的 ${ids.length} 个项目吗？此操作不可恢复。`,
@@ -627,10 +735,20 @@ const FileManager = ({ view = 'all' }) => {
           <Space>
             <Button 
               icon={<ReloadOutlined />} 
-              onClick={() => {
+              onClick={async () => {
                 if (isSyncView) {
-                  fetchSyncFiles(currentSyncPath || syncPath);
+                  // 同步文件视图：先执行一次云端->本地同步，再刷新本地视图
+                  console.log('[Sync] 刷新按钮点击（同步文件视图）');
+                  try {
+                    await triggerOnce();
+                  } catch (e) {
+                    console.error('[Sync] triggerOnce 执行出错', e);
+                  }
+                  await fetchSyncFiles(currentSyncPath || syncPath);
                 } else {
+                  console.log('[Sync] 刷新按钮点击（云端视图）', {
+                    parentId: currentParentId,
+                  });
                   fetchFiles(currentParentId);
                 }
               }}
@@ -727,6 +845,12 @@ const FileManager = ({ view = 'all' }) => {
           </div>
         )}
 
+        {needSyncPathGuard() && (
+          <div style={{ marginBottom: 12, padding: '10px 12px', background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 6 }}>
+            <Text>当前处于云端“同步文件”目录，需先设置本地同步路径后才能进行上传或修改。请点击左下角“设置”按钮选择路径。</Text>
+          </div>
+        )}
+
         <Space style={{ marginBottom: 16 }} size="middle">
           <Search
             placeholder="搜索文件和文件夹"
@@ -740,15 +864,27 @@ const FileManager = ({ view = 'all' }) => {
             <Button 
               icon={<UploadOutlined />}
               type="primary"
-              onClick={() => setShowUploadManager(true)}
+              onClick={() => guardOr(() => setShowUploadManager(true))}
+              disabled={needSyncPathGuard()}
             >
               上传文件
+            </Button>
+          )}
+          {isSyncView && (
+            <Button 
+              icon={<UploadOutlined />}
+              type="primary"
+              onClick={handleUploadToSync}
+              disabled={!syncPath}
+            >
+              上传到同步
             </Button>
           )}
           
           <Button 
             icon={<FolderOutlined />}
-            onClick={() => setShowNewFolderModal(true)}
+            onClick={() => guardOr(() => setShowNewFolderModal(true))}
+            disabled={needSyncPathGuard()}
           >
             新建文件夹
           </Button>
@@ -885,6 +1021,33 @@ const FileManager = ({ view = 'all' }) => {
           </div>
         )}
       </Modal>
+
+      {/* 分享模态框 */}
+      {shareTarget && (
+        <ShareModal
+          open={shareModalVisible}
+          onClose={() => {
+            setShareModalVisible(false);
+            setShareTarget(null);
+          }}
+          resource={shareTarget}
+          onShared={() => {
+            // 共享成功后，可在此扩展：通知或刷新“我的共享”目录
+          }}
+        />
+      )}
+
+      {/* 版本历史抽屉 */}
+      {versionFile && (
+        <VersionHistory
+          open={versionDrawerVisible}
+          onClose={() => {
+            setVersionDrawerVisible(false);
+            setVersionFile(null);
+          }}
+          file={versionFile}
+        />
+      )}
     </div>
   );
 };

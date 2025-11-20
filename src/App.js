@@ -11,6 +11,7 @@ import LoginForm from './components/LoginForm';
 import MainLayout from './components/MainLayout';
 import { AuthProvider } from './contexts/AuthContext';
 import { FileProvider } from './contexts/FileContext';
+import { SyncProvider } from './contexts/SyncContext';
 import './App.css';
 
 const { Content } = Layout;
@@ -98,17 +99,19 @@ function App() {
     >
       <AntdApp>
         <AuthProvider>
-          <FileProvider>
-            <Layout className="app-layout">
-              <Content className="app-content">
-                {!isAuthenticated ? (
-                  <LoginForm onLogin={handleLogin} />
-                ) : (
-                  <MainLayout onLogout={handleLogout} />
-                )}
-              </Content>
-            </Layout>
-          </FileProvider>
+          <SyncProvider>
+            <FileProvider>
+              <Layout className="app-layout">
+                <Content className="app-content">
+                  {!isAuthenticated ? (
+                    <LoginForm onLogin={handleLogin} />
+                  ) : (
+                    <MainLayout onLogout={handleLogout} />
+                  )}
+                </Content>
+              </Layout>
+            </FileProvider>
+          </SyncProvider>
         </AuthProvider>
       </AntdApp>
     </ConfigProvider>

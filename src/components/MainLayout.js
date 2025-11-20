@@ -1,19 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Menu, Button, Typography, theme, Popover, Avatar, Divider } from 'antd';
-import {
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  HomeOutlined,
-  FolderOutlined,
-  FileOutlined,
-  CloudSyncOutlined,
-  UserOutlined,
-  LogoutOutlined
-} from '@ant-design/icons';
+  import {
+    MenuFoldOutlined,
+    MenuUnfoldOutlined,
+    HomeOutlined,
+    FolderOutlined,
+    FileOutlined,
+    CloudSyncOutlined,
+    SettingOutlined,
+    UserOutlined,
+    LogoutOutlined,
+    DeleteOutlined
+  } from '@ant-design/icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useFile } from '../contexts/FileContext';
 import FileManager from './FileManager';
 import Settings from './Settings';
+import ShareManager from './ShareManager';
+import TrashManager from './TrashManager';
 
 const { Header, Sider, Content } = Layout;
 const { Title } = Typography;
@@ -26,7 +30,10 @@ const MainLayout = ({ onLogout }) => {
   const { 
     currentPath, 
     loading, 
-    fetchFiles 
+    fetchFiles,
+    openNamedRootFolder,
+    navigateToBreadcrumb,
+    openAllRoot 
   } = useFile();
   const { token } = theme.useToken();
 
@@ -68,6 +75,16 @@ const MainLayout = ({ onLogout }) => {
       icon: <CloudSyncOutlined />,
       label: '同步文件',
     },
+    {
+      key: 'share-manager',
+      icon: <FolderOutlined />,
+      label: '共享管理',
+    },
+    {
+      key: 'trash',
+      icon: <DeleteOutlined />,
+      label: '回收站',
+    },
   ];
 
   // 渲染主内容区
@@ -79,6 +96,13 @@ const MainLayout = ({ onLogout }) => {
         return <FileManager view="recent" />;
       case 'shared':
         return <FileManager view="shared" />;
+      case 'share-manager':
+        return <ShareManager onOpenSharedResource={(share) => {
+          // 当在共享管理中点击"打开"时，切换到共享文件视图并导航到该资源
+          setActiveKey('shared');
+        }} />;
+      case 'trash':
+        return <TrashManager />;
       case 'sync':
         return <FileManager view="sync" />;
       default:
@@ -99,6 +123,7 @@ const MainLayout = ({ onLogout }) => {
           background: '#ffffff',
           borderRight: `1px solid ${token.colorBorder}`,
           boxShadow: '2px 0 8px rgba(0, 0, 0, 0.06)',
+          position: 'relative'
         }}
       >
         {/* Logo 区域 */}
@@ -118,13 +143,50 @@ const MainLayout = ({ onLogout }) => {
           mode="inline"
           selectedKeys={[activeKey]}
           items={menuItems}
-          onClick={({ key }) => setActiveKey(key)}
+          onClick={async ({ key }) => {
+            if (key === 'sync') {
+              setActiveKey('sync');
+              await openNamedRootFolder('同步文件');
+              return;
+            }
+            if (key === 'shared') {
+              setActiveKey('shared');
+              await openNamedRootFolder('我的共享');
+              return;
+            }
+            if (key === 'files') {
+              setActiveKey('files');
+              await openAllRoot();
+              return;
+            }
+            setActiveKey(key);
+          }}
           style={{ 
             borderRight: 0,
             background: 'transparent',
             padding: '8px 0'
           }}
         />
+
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 12,
+            left: 0,
+            width: '100%',
+            borderTop: `1px solid ${token.colorBorder}`,
+            padding: '12px 16px',
+            background: '#ffffff'
+          }}
+        >
+          <Button
+            block
+            icon={<SettingOutlined />}
+            onClick={() => setShowSettings(true)}
+          >
+            设置
+          </Button>
+        </div>
       </Sider>
 
       <Layout>

@@ -1,6 +1,9 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain } = require('electron');
+const fs = require('fs');
+const fsp = require('fs/promises');
+const os = require('os');
 const path = require('path');
-const Store = require('electron-store');
+const Store = require('electron-store').default;
 const isDev = process.env.NODE_ENV === 'development';
 
 // 初始化 electron-store
@@ -17,6 +20,16 @@ const store = new Store({
 
 let mainWindow;
 
+// 同步相关状态（本地文件系统监控）
+let syncWatcher = null;
+let syncDebounceTimer = null;
+let syncEventQueue = [];
+const syncStatus = {
+  running: false,
+  lastEventAt: null,
+  lastError: null,
+};
+
 function createWindow() {
   // 创建浏览器窗口
   mainWindow = new BrowserWindow({
@@ -27,7 +40,6 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      enableRemoteModule: false,
       preload: path.join(__dirname, 'preload.js')
     },
     icon: path.join(__dirname, 'assets/icon.png'), // 可选：设置应用图标
@@ -38,11 +50,11 @@ function createWindow() {
 
   // 加载应用
   if (isDev) {
-    mainWindow.loadURL('http://localhost:3000');
+    mainWindow.loadURL('http://localhost:5173');
     // 开发环境下打开开发者工具
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(path.join(__dirname, 'build/index.html'));
+    mainWindow.loadFile(path.join(__dirname, 'dist/index.html'));
   }
 
   // 当窗口准备显示时才显示
@@ -63,11 +75,11 @@ function createWindow() {
     mainWindow = null;
   });
 
-  // 处理文件拖拽
+  // 处理文件拖拽和导航
   mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
     const parsedUrl = new URL(navigationUrl);
     
-    if (parsedUrl.origin !== 'http://localhost:3000' && parsedUrl.origin !== 'file://') {
+    if (parsedUrl.origin !== 'http://localhost:5173' && parsedUrl.origin !== 'file://') {
       event.preventDefault();
     }
   });
@@ -193,6 +205,274 @@ ipcMain.handle('store-clear', () => {
   return true;
 });
 
+// 文件系统相关 IPC 处理
+ipcMain.handle('fs-get-sync-path', async () => {
+  try {
+    const p = store.get('sync.path') || '';
+    return p;
+  } catch (e) {
+    return '';
+  }
+});
+
+ipcMain.handle('fs-set-sync-path', async (event, dirPath) => {
+  try {
+    if (!dirPath || typeof dirPath !== 'string') {
+      return { success: false, error: '路径无效' };
+    }
+    // 规范化路径
+    const target = dirPath;
+    // 如果不存在则创建
+    try {
+      await fsp.mkdir(target, { recursive: true });
+    } catch (e) {}
+    // 校验是目录
+    const stat = await fsp.stat(target);
+    if (!stat.isDirectory()) {
+      return { success: false, error: '请选择目录路径' };
+    }
+    store.set('sync.path', target);
+
+    // 通知渲染进程同步路径已更新
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('sync-path-updated', target);
+    }
+
+    return { success: true, data: target };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('fs-stat', async (event, filePath) => {
+  try {
+    const s = await fsp.stat(filePath);
+    return {
+      success: true,
+      data: {
+        is_dir: s.isDirectory(),
+        size: s.size,
+        created_at: s.birthtime,
+        updated_at: s.mtime
+      }
+    };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('fs-readdir', async (event, dirPath) => {
+  try {
+    const items = await fsp.readdir(dirPath, { withFileTypes: true });
+    const results = await Promise.all(items.map(async (d) => {
+      const fullPath = require('path').join(dirPath, d.name);
+      const s = await fsp.stat(fullPath);
+      return {
+        name: d.name,
+        path: fullPath,
+        is_dir: d.isDirectory(),
+        size: s.size,
+        created_at: s.birthtime,
+        updated_at: s.mtime
+      };
+    }));
+    return { success: true, data: results };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('fs-mkdir', async (event, dirPath) => {
+  try {
+    await fsp.mkdir(dirPath, { recursive: true });
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('fs-rename', async (event, oldPath, newPath) => {
+  try {
+    await fsp.rename(oldPath, newPath);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('fs-remove', async (event, targetPath, isDir) => {
+  try {
+    if (isDir) {
+      await fsp.rm(targetPath, { recursive: true, force: true });
+    } else {
+      await fsp.rm(targetPath, { force: true });
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('fs-write-file', async (event, targetPath, data) => {
+  try {
+    // data 可能是 ArrayBuffer、Uint8Array 或 base64 字符串
+    let buffer;
+    if (Buffer.isBuffer(data)) {
+      buffer = data;
+    } else if (data && data.type === 'Buffer' && data.data) {
+      buffer = Buffer.from(data.data);
+    } else if (data instanceof Uint8Array) {
+      buffer = Buffer.from(data);
+    } else if (typeof data === 'string') {
+      buffer = Buffer.from(data, 'base64');
+    } else if (data && data.arrayBuffer) {
+      const ab = await data.arrayBuffer();
+      buffer = Buffer.from(ab);
+    } else {
+      return { success: false, error: '不支持的数据类型' };
+    }
+    await fsp.mkdir(require('path').dirname(targetPath), { recursive: true });
+    await fsp.writeFile(targetPath, buffer);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+ipcMain.handle('fs-read-file', async (_event, targetPath) => {
+  try {
+    if (!targetPath || typeof targetPath !== 'string') {
+      return { success: false, error: '路径无效' };
+    }
+    const data = await fsp.readFile(targetPath);
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// 启动本地同步文件夹监控
+function startSyncWatcher() {
+  if (syncWatcher) {
+    syncStatus.running = true;
+    console.log('[Sync][main] 监控已在运行，直接返回当前状态', syncStatus);
+    return syncStatus;
+  }
+
+  const syncPath = store.get('sync.path');
+  if (!syncPath || typeof syncPath !== 'string') {
+    const error = '未设置本地同步路径';
+    syncStatus.lastError = error;
+    console.error('[Sync][main] 启动监控失败：未设置同步路径');
+    throw new Error(error);
+  }
+
+  try {
+    // 确保目录存在
+    if (!fs.existsSync(syncPath)) {
+      fs.mkdirSync(syncPath, { recursive: true });
+    }
+    console.log('[Sync][main] 启动本地文件系统监控', { syncPath });
+
+    // 使用 fs.watch 递归监控目录变更
+    syncWatcher = fs.watch(
+      syncPath,
+      { recursive: true },
+      (eventType, filename) => {
+        if (!filename) return;
+        const fullPath = path.join(syncPath, filename);
+
+        const event = {
+          rawType: eventType,
+          filename,
+          fullPath,
+          at: new Date().toISOString(),
+        };
+
+        syncEventQueue.push(event);
+
+        if (syncDebounceTimer) {
+          clearTimeout(syncDebounceTimer);
+        }
+
+        // 500ms 防抖聚合事件
+        syncDebounceTimer = setTimeout(async () => {
+          const queue = syncEventQueue;
+          syncEventQueue = [];
+
+          const enriched = await Promise.all(
+            queue.map(async (e) => {
+              try {
+                const stat = await fsp.stat(e.fullPath);
+                return {
+                  ...e,
+                  type: e.rawType === 'change' ? 'modify' : 'rename',
+                  isDir: stat.isDirectory(),
+                  exists: true,
+                };
+              } catch (err) {
+                // 文件不存在，视为删除
+                return {
+                  ...e,
+                  type: 'delete',
+                  isDir: false,
+                  exists: false,
+                };
+              }
+            })
+          );
+
+          syncStatus.lastEventAt = new Date().toISOString();
+          console.log('[Sync][main] 本地变更事件批次', {
+            count: enriched.length,
+            events: enriched.slice(0, 20), // 避免一次输出过多
+          });
+
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('sync-local-events', enriched);
+          }
+        }, 500);
+      }
+    );
+
+    syncStatus.running = true;
+    syncStatus.lastError = null;
+    console.log('[Sync][main] 本地文件系统监控已启动');
+    return syncStatus;
+  } catch (err) {
+    syncStatus.lastError = err.message || String(err);
+    if (syncWatcher) {
+      try {
+        syncWatcher.close();
+      } catch (e) {
+        // ignore
+      }
+      syncWatcher = null;
+    }
+    console.error('[Sync][main] 启动监控异常', err);
+    throw err;
+  }
+}
+
+function stopSyncWatcher() {
+  if (syncWatcher) {
+    try {
+      syncWatcher.close();
+    } catch (e) {
+      // ignore
+    }
+    syncWatcher = null;
+  }
+  if (syncDebounceTimer) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+  }
+  syncEventQueue = [];
+  syncStatus.running = false;
+  console.log('[Sync][main] 本地文件系统监控已停止');
+  return syncStatus;
+}
+
 // 应用事件处理
 app.whenReady().then(createWindow);
 
@@ -222,4 +502,23 @@ app.on('web-contents-created', (event, contents) => {
       event.preventDefault();
     }
   });
+});
+
+// 同步相关 IPC（供渲染进程控制本地监控）
+ipcMain.handle('sync-start', async () => {
+  try {
+    const status = startSyncWatcher();
+    return { success: true, data: status };
+  } catch (error) {
+    return { success: false, error: error.message || String(error) };
+  }
+});
+
+ipcMain.handle('sync-stop', async () => {
+  const status = stopSyncWatcher();
+  return { success: true, data: status };
+});
+
+ipcMain.handle('sync-get-status', async () => {
+  return { success: true, data: syncStatus };
 });

@@ -16,12 +16,17 @@ const { Text } = Typography;
 
 const UploadManager = ({ visible, onClose, currentParentId = null, onUploadSuccess }) => {
   const { message } = App.useApp();
-  const { setUploadingFiles } = useFile();
+  const { setUploadingFiles, breadcrumbs, syncPath } = useFile();
+  const inCloudSyncFolder = Array.isArray(breadcrumbs) && breadcrumbs.length > 0 && breadcrumbs[0].name === '同步文件';
   const [uploadList, setUploadList] = useState([]);
   const [uploading, setUploading] = useState(false);
 
   // 处理文件上传前的验证
   const beforeUpload = useCallback((file) => {
+    if (inCloudSyncFolder && !syncPath) {
+      message.error('请先在设置中选择本地同步路径');
+      return Upload.LIST_IGNORE;
+    }
     const maxSize = 100 * 1024 * 1024; // 100MB
     if (file.size > maxSize) {
       message.error(`文件 ${file.name} 超过大小限制 (100MB)`);
@@ -43,7 +48,7 @@ const UploadManager = ({ visible, onClose, currentParentId = null, onUploadSucce
 
     setUploadList(prev => [...prev, uploadItem]);
     return false; // 阻止自动上传
-  }, []);
+  }, [inCloudSyncFolder, syncPath, message]);
 
   // 单文件上传
   const uploadSingleFile = useCallback(async (uploadItem) => {

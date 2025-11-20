@@ -23,18 +23,18 @@ const fileAPI = {
     }
   },
 
-  // 创建共享 (根据文档规范)
-  async createShare(resourceId, permissions, expireAt = null) {
+  // 创建共享 (根据后端 /api/v1/shares 定义)
+  async createShare(resourceId, targetUserId, permission = 'read', expiresAt = null) {
     try {
       const requestData = {
         resource_id: resourceId,
-        permissions: permissions
+        target_user_id: targetUserId,
+        permission,
+        expires_at: expiresAt
       };
-      if (expireAt) requestData.expire_at = expireAt;
       
-      const response = await request.post('/shares/create', requestData);
+      const response = await request.post('/shares', requestData);
       
-      // 根据文档规范，响应格式为 {code, message, data}
       if (response.code === 0) {
         return { success: true, data: response.data };
       } else {
@@ -48,14 +48,10 @@ const fileAPI = {
     }
   },
 
-  // 查看共享给我的资源 (根据文档规范)
-  async getSharedWithMe(page = 1, limit = 20) {
+  // 查看我共享出去的资源
+  async getOutgoingShares() {
     try {
-      const response = await request.get('/shares/shared-with-me', {
-        params: { page, limit }
-      });
-      
-      // 根据文档规范，响应格式为 {code, message, data}
+      const response = await request.get('/shares/outgoing');
       if (response.code === 0) {
         return { success: true, data: response.data };
       } else {
@@ -64,7 +60,61 @@ const fileAPI = {
     } catch (error) {
       return { 
         success: false, 
-        message: error.response?.data?.message || '获取共享资源失败' 
+        message: error.response?.data?.message || '获取我共享的资源失败' 
+      };
+    }
+  },
+
+  // 查看共享给我的资源
+  async getIncomingShares() {
+    try {
+      const response = await request.get('/shares/incoming');
+      if (response.code === 0) {
+        return { success: true, data: response.data };
+      } else {
+        return { success: false, message: response.message };
+      }
+    } catch (error) {
+      return { 
+        success: false, 
+        message: error.response?.data?.message || '获取共享给我的资源失败' 
+      };
+    }
+  },
+
+  // 删除共享
+  async deleteShare(shareId) {
+    try {
+      const response = await request.delete(`/shares/${shareId}`);
+      if (response.code === 0) {
+        return { success: true, data: response.data };
+      } else {
+        return { success: false, message: response.message };
+      }
+    } catch (error) {
+      return { 
+        success: false, 
+        message: error.response?.data?.message || '删除共享失败' 
+      };
+    }
+  },
+
+  // 获取用户列表（用于协作分享选择目标用户）
+  async getUsers(keyword = '') {
+    try {
+      const params = {};
+      if (keyword) params.q = keyword;
+
+      const response = await request.get('/users', { params });
+      if (response.code === 0) {
+        return { success: true, data: response.data };
+      } else {
+        return { success: false, message: response.message };
+      }
+    } catch (error) {
+      return {
+        success: false,
+        message: error.response?.data?.message || '获取用户列表失败'
       };
     }
   },
@@ -254,7 +304,8 @@ const fileAPI = {
       const response = await request.post(`/files/upload-chunk?session_id=${sessionId}&index=${index}`, chunk, {
         headers: {
           'X-Chunk-Hash': chunkHash,
-          'Content-Type': 'application/octet-stream'
+          'Content-Type': 'application/octet-stream',
+          'Content-Encoding': 'gzip'
         }
       });
       
@@ -426,6 +477,24 @@ const fileAPI = {
     }
   },
 
+  // 删除文件版本
+  async deleteFileVersion(fileId, versionId) {
+    try {
+      const response = await request.delete(`/files/${fileId}/versions/${versionId}`);
+      
+      if (response.code === 0) {
+        return { success: true, message: response.message };
+      } else {
+        return { success: false, message: response.message };
+      }
+    } catch (error) {
+      return { 
+        success: false, 
+        message: error.response?.data?.message || '删除版本失败' 
+      };
+    }
+  },
+
   // 获取变更列表 (根据文档规范)
   async getSyncChanges(sinceId = null, limit = 100) {
     try {
@@ -491,14 +560,11 @@ const fileAPI = {
     }
   },
 
-  // 获取回收站文件 (根据文档规范)
-  async getTrash(page = 1, limit = 20) {
+  // 获取回收站文件列表
+  async getTrash() {
     try {
-      const response = await request.get('/files/trash', {
-        params: { page, limit }
-      });
+      const response = await request.get('/fs/trash');
       
-      // 根据文档规范，响应格式为 {code, message, data}
       if (response.code === 0) {
         return { success: true, data: response.data };
       } else {
@@ -512,12 +578,11 @@ const fileAPI = {
     }
   },
 
-  // 恢复回收站文件 (根据文档规范)
-  async restoreTrashFile(fileId) {
+  // 恢复回收站文件
+  async restoreTrashFile(nodeId) {
     try {
-      const response = await request.post(`/files/trash/restore/${fileId}`);
+      const response = await request.post(`/fs/trash/${nodeId}/restore`);
       
-      // 根据文档规范，响应格式为 {code, message, data}
       if (response.code === 0) {
         return { success: true, data: response.data };
       } else {
@@ -531,21 +596,20 @@ const fileAPI = {
     }
   },
 
-  // 清空回收站 (根据文档规范)
-  async emptyTrash() {
+  // 彻底删除回收站文件
+  async permanentlyDeleteTrashFile(nodeId) {
     try {
-      const response = await request.delete('/files/trash');
+      const response = await request.delete(`/fs/trash/${nodeId}`);
       
-      // 根据文档规范，响应格式为 {code, message, data}
       if (response.code === 0) {
-        return { success: true, data: response.data };
+        return { success: true, message: response.message };
       } else {
         return { success: false, message: response.message };
       }
     } catch (error) {
       return { 
         success: false, 
-        message: error.response?.data?.message || '清空回收站失败' 
+        message: error.response?.data?.message || '彻底删除失败' 
       };
     }
   },

@@ -114,6 +114,10 @@ typings/
 release/
 dist_electron/
 
+# Vite
+.vite/
+dist/
+
 # Temporary folders
 tmp/
 temp/

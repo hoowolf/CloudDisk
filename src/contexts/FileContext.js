@@ -27,6 +27,41 @@ export const FileProvider = ({ children }) => {
     'Content-Type': 'application/json',
   }), [token]);
 
+  // 获取共享给我的文件列表
+  const fetchSharedFiles = useCallback(async () => {
+    if (!isAuthenticated || !token) return;
+
+    setLoading(true);
+    try {
+      const response = await request.get('/shares/incoming');
+      if (response.code === 0) {
+        // 将共享信息转换为文件列表格式
+        const sharedItems = (response.data || []).map(share => ({
+          id: share.resource_id,
+          name: share.resource_name || '（已删除）',
+          is_dir: share.resource_is_dir || false,
+          size: 0,
+          updated_at: share.created_at,
+          shared: true, // 标记为共享文件
+          share_info: share, // 保留共享信息
+          owner_username: share.owner_username,
+          permission: share.permission
+        }));
+        setFiles(sharedItems);
+        setCurrentParentId(null);
+        setBreadcrumbs([{ id: null, name: '共享给我的', path: '/shared' }]);
+        setCurrentPath('/shared');
+      } else {
+        message.error(response.message || '获取共享文件失败');
+      }
+    } catch (error) {
+      console.error('Fetch shared files error:', error);
+      message.error('获取共享文件失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [token, isAuthenticated, message]);
+
   // 获取文件列表
   const fetchFiles = useCallback(async (parentId = null) => {
     if (!isAuthenticated || !token) return;
@@ -194,13 +229,8 @@ export const FileProvider = ({ children }) => {
       const newBreadcrumbs = breadcrumbs.slice(0, -1);
       const parentId = newBreadcrumbs[newBreadcrumbs.length - 1].id;
       setBreadcrumbs(newBreadcrumbs);
-      // 更新路径
-      if (newBreadcrumbs.length === 1) {
-        setCurrentPath('/');
-      } else {
-        const pathParts = newBreadcrumbs.slice(1).map(b => b.name);
-        setCurrentPath(`/${pathParts.join('/')}`);
-      }
+      const pathStr = `/${newBreadcrumbs.map(b => b.name).join('/')}`;
+      setCurrentPath(pathStr);
       fetchFiles(parentId);
     }
   }, [breadcrumbs, fetchFiles, isSyncView, currentSyncPath, syncPath, fetchSyncFiles]);
@@ -224,13 +254,8 @@ export const FileProvider = ({ children }) => {
     if (targetIndex >= 0) {
       const newBreadcrumbs = breadcrumbs.slice(0, targetIndex + 1);
       setBreadcrumbs(newBreadcrumbs);
-      // 更新路径
-      if (newBreadcrumbs.length === 1) {
-        setCurrentPath('/');
-      } else {
-        const pathParts = newBreadcrumbs.slice(1).map(b => b.name);
-        setCurrentPath(`/${pathParts.join('/')}`);
-      }
+      const pathStr = `/${newBreadcrumbs.map(b => b.name).join('/')}`;
+      setCurrentPath(pathStr);
       fetchFiles(targetId);
     }
   }, [breadcrumbs, fetchFiles, isSyncView, fetchSyncFiles]);
@@ -336,13 +361,26 @@ export const FileProvider = ({ children }) => {
     }
   };
 
-  // 初始化同步文件夹路径
+  // 初始化同步文件夹路径，并监听路径变更
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.fs) {
       window.electronAPI.fs.getSyncPath().then(path => {
         setSyncPath(path);
       });
     }
+
+    let unsubscribe;
+    if (window.electronAPI && window.electronAPI.sync && window.electronAPI.sync.onPathUpdated) {
+      unsubscribe = window.electronAPI.sync.onPathUpdated((newPath) => {
+        setSyncPath(newPath || '');
+      });
+    }
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
   }, []);
 
   // 初始化时加载根目录文件
@@ -371,6 +409,7 @@ export const FileProvider = ({ children }) => {
     
     // 方法
     fetchFiles,
+    fetchSharedFiles,
     fetchSyncFiles,
     navigateToFolder,
     navigateUp,
@@ -379,6 +418,48 @@ export const FileProvider = ({ children }) => {
     renameItem,
     deleteItems,
     moveItems,
+    openNamedRootFolder: async (folderName) => {
+      try {
+        const response = await request.get(`/fs/list?parent_id=null`);
+        if (response.code === 0) {
+          const target = (response.data.items || []).find(item => item.is_dir && item.name === folderName);
+          if (target) {
+            setIsSyncView(false);
+            setSelectedFiles([]);
+            setBreadcrumbs([
+              { id: target.id, name: target.name, path: `/${target.name}` }
+            ]);
+            setCurrentPath(`/${target.name}`);
+            setCurrentParentId(target.id);
+            await fetchFiles(target.id);
+            return { success: true };
+          } else {
+            message.error(`未找到文件夹：${folderName}`);
+            return { success: false };
+          }
+        } else {
+          message.error(response.message || '获取根目录失败');
+          return { success: false };
+        }
+      } catch (error) {
+        console.error('Open named root folder error:', error);
+        message.error('打开默认文件夹失败');
+        return { success: false };
+      }
+    },
+    openAllRoot: async () => {
+      try {
+        setIsSyncView(false);
+        setSelectedFiles([]);
+        setBreadcrumbs([{ id: null, name: '全部文件', path: '/' }]);
+        setCurrentPath('/');
+        setCurrentParentId(null);
+        await fetchFiles(null);
+        return { success: true };
+      } catch (error) {
+        return { success: false };
+      }
+    },
     setSelectedFiles,
     setViewMode,
     setUploadingFiles,
