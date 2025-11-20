@@ -1,0 +1,253 @@
+/* App 容器样式 */
+.app-layout {
+  min-height: 100vh;
+}
+
+.app-content {
+  min-height: 100vh;
+}
+
+/* 登录页面样式 */
+.login-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 20px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+}
+
+.login-header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.login-header h1 {
+  color: #1890ff;
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.login-header p {
+  color: #666;
+  font-size: 14px;
+}
+
+/* 加载动画 */
+.app-loading {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: #f5f5f5;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #f3f3f3;
+  border-top: 3px solid #1890ff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* 主布局样式 */
+.main-layout {
+  min-height: 100vh;
+}
+
+/* Logo 容器样式 */
+.logo-container {
+  padding: 20px 16px;
+  margin: 16px 12px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  transition: all 0.3s ease;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.logo-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s ease;
+}
+
+.logo-container:hover::before {
+  left: 100%;
+}
+
+.logo-container:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+.logo-container.collapsed {
+  padding: 16px;
+  margin: 16px auto;
+  width: 48px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Logo 文字样式 */
+.logo-text {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+.logo-text .anticon {
+  font-size: 28px;
+  color: #ffffff;
+  margin-right: 10px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+/* 折叠状态下的图标样式 */
+.logo-container.collapsed .anticon {
+  font-size: 28px;
+  color: #ffffff;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+  animation: float 3s ease-in-out infinite;
+}
+
+/* 菜单项样式优化 */
+.main-layout .ant-layout-sider .ant-menu {
+  background: transparent !important;
+}
+
+.main-layout .ant-layout-sider .ant-menu-item {
+  margin: 4px 12px !important;
+  border-radius: 8px !important;
+  height: 44px !important;
+  line-height: 44px !important;
+  transition: all 0.3s ease !important;
+}
+
+.main-layout .ant-layout-sider .ant-menu-item:hover {
+  background: rgba(102, 126, 234, 0.1) !important;
+  transform: translateX(4px);
+}
+
+.main-layout .ant-layout-sider .ant-menu-item-selected {
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.15) 100%) !important;
+  color: #667eea !important;
+  font-weight: 600 !important;
+  border-left: 3px solid #667eea !important;
+}
+
+.main-layout .ant-layout-sider .ant-menu-item-selected::after {
+  display: none !important;
+}
+
+.main-layout .ant-layout-sider .ant-menu-item-icon {
+  font-size: 18px !important;
+  margin-right: 12px !important;
+}
+
+/* 折叠状态下的菜单样式 */
+.main-layout .ant-layout-sider-collapsed .ant-menu-item {
+  margin: 4px 8px !important;
+  padding: 0 16px !important;
+}
+
+/* Header 布局样式 */
+.main-header {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  position: relative !important;
+  z-index: 100 !important;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* 文件列表表格样式 */
+.file-list-table .ant-table-thead > tr > th {
+  background: #fafafa;
+  font-weight: 500;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.file-list-table .ant-table-tbody > tr > td {
+  border-bottom: 1px solid #f0f0f0;
+  padding: 12px 16px;
+}
+
+.file-list-table .ant-table-tbody > tr:hover > td {
+  background: #fafafa;
+}
+
+.file-list-table .ant-checkbox-wrapper {
+  margin-right: 8px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .login-container {
+    padding: 16px;
+  }
+  
+  .login-card {
+    max-width: 100%;
+  }
+
+  .logo-container {
+    margin: 12px 8px;
+    padding: 16px 12px;
+  }
+
+  .logo-text {
+    font-size: 16px;
+  }
+}
